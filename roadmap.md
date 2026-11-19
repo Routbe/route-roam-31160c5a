@@ -476,3 +476,10 @@
 - [ ] B: OID4VCI issuer (metadata, pre-authorized code, token/nonce/credential), console tab
 - [ ] C: OID4VP verifier (request object, direct_post, verification), console tools
 - [ ] D: Token Status List (JWT, compressed), migration replay-tested, waits for GO
+
+## EUDI Wallet / Post-Quantum overdracht (0294)
+- [ ] 0294 PGlite-replay + rollout dry run groen
+- [ ] 0294 live op Neon (wacht op eigenaar: `bun scripts/migration-rollout.ts --apply db/0294_eudi_wallet.sql`)
+- [ ] NIST ACVP ML-DSA-65 fixture + hybride handtekeningtests
+- [ ] OID4VCI / OID4VP / Status List / zeroization tests
+- [ ] HANDOVER-appendix bijwerken na groene suite
