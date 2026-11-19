@@ -112,9 +112,6 @@ use the editor.
 - createServerFn exports need requireAuth/requireDeveloperAccess/optionalAuth or an entry in PUBLIC_SERVER_FNS (src/test/server-fn-auth-guard.test.ts). Why: route gates only hide UI.
 
 
-## OID4VCI DPoP
-- The OID4VCI token and credential endpoints accept only RFC 9449 DPoP (src/lib/eudi/dpop.ts): no Bearer fallback, the access token is stored as SHA-256(token "." jkt), server DPoP nonces use their own HMAC key, and jti replays are refused by a per-instance 60 s cache that fails closed. Why: an intercepted token or proof must be useless without the wallet's private key.
-
 <!-- AGENT-MEMORY:BEGIN -->
 ## One-file migration rollout
 - A GO for a single migration is applied with scripts/migration-rollout.ts --apply: the exact db/ file text travels as one parameter, runs only if its SHA-256 equals the file checksum and its predecessor is recorded, and is recorded with the definer guard in the same transaction (dry run: src/test/migration-rollout.test.ts). Why: a retyped or hand-split file must never diverge from db/.
