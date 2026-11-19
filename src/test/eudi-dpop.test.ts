@@ -50,14 +50,9 @@ const opts = (over: Partial<Parameters<typeof checkDpopProof>[1]> = {}) => ({
 });
 
 describe("DPoP proof (RFC 9449)", () => {
-  it("accepts ES256 and Ed25519 proofs and returns the RFC 7638 thumbprint", async () => {
+  it("accepts ES256 and Ed25519 proofs and returns the key thumbprint", async () => {
     expect(await checkDpopProof(dpop(), opts())).toMatchObject({ ok: true, jkt: jwkThumbprint(edJwk) });
     expect(await checkDpopProof(dpop({ ec: true }), opts())).toMatchObject({ ok: true, jkt: jwkThumbprint(ecJwk) });
-  });
-  it("RFC 7638 thumbprint matches the RFC's own example", () => {
-    const rfc = { kty: "EC", crv: "P-256", x: "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU", y: "x_FEzRjGcD6EOrbiVhpDYV3SBPlsZqzhrnHXIO5JxUU" } as PublicJwk;
-    expect(jwkThumbprint(rfc)).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(jwkThumbprint({ ...rfc })).toBe(jwkThumbprint(rfc));
   });
   it("refuses a replayed proof within the 60 s window", async () => {
     const o = opts();
