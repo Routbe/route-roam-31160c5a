@@ -483,3 +483,5 @@
 - [ ] NIST ACVP ML-DSA-65 fixture + hybride handtekeningtests
 - [ ] OID4VCI / OID4VP / Status List / zeroization tests
 - [ ] HANDOVER-appendix bijwerken na groene suite
+- [ ] DPoP JTI-replaybescherming op OID4VCI-token (wacht op keuze eigenaar: optioneel/verplicht)
+- [ ] Test: status-list-JWT verankerd aan gepubliceerde sleutel (kid)
