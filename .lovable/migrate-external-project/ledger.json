@@ -1,0 +1,17 @@
+{
+  "source": "github:Routbe/route-roam-9c3a640a@main",
+  "capabilities": [
+    {"capability": "code", "source": "TanStack Start app (pages, MDX docs, wasm, worker, scripts)", "outcome": "copied as-is", "status": "done", "next_action": "verify preview pages"},
+    {"capability": "schema", "source": "Neon Postgres, db/*.sql migrations (~272 tables)", "outcome": "keep on Neon (pending user answer)", "status": "pending_decision", "next_action": "user answers Neon vs Lovable Cloud"},
+    {"capability": "records", "source": "Neon", "outcome": "stay in Neon if kept", "status": "pending_decision", "next_action": "none if Neon kept"},
+    {"capability": "auth identities", "source": "Better Auth passkeys + OPAQUE in Neon", "outcome": "keep (pending user answer)", "status": "pending_decision", "next_action": "user decision"},
+    {"capability": "authorization", "source": "Postgres RLS + rout_app role", "outcome": "unchanged in Neon", "status": "pending_decision", "next_action": "user decision"},
+    {"capability": "file storage", "source": "Scaleway S3", "outcome": "preserve", "status": "pending", "next_action": "SCALEWAY_* secrets at verification"},
+    {"capability": "payments", "source": "Stripe", "outcome": "preserve", "status": "pending", "next_action": "Stripe keys at verification"},
+    {"capability": "schedules", "source": "vercel.json cron /api/public/cron/cleanup-assets daily 03:00", "outcome": "preserve endpoint; scheduler moves at cutover", "status": "pending", "next_action": "configure scheduler at cutover"},
+    {"capability": "public endpoints", "source": ".well-known/*, /api/public/*, OAuth/OIDC issuer", "outcome": "preserved in code", "status": "pending", "next_action": "verify with database connected"},
+    {"capability": "secrets", "source": "DATABASE_URL, BETTER_AUTH_SECRET, ROUT_VAULT_KEK, SCALEWAY_*, Stripe, others", "outcome": "request securely", "status": "pending", "next_action": "secure secret form before live verification"},
+    {"capability": "cutover", "source": "custom domain / hosting", "outcome": "not started", "status": "pending", "next_action": "user decision"},
+    {"capability": "verification", "source": "-", "outcome": "-", "status": "pending", "next_action": "public pages first, signed-in flows after secrets"}
+  ]
+}
