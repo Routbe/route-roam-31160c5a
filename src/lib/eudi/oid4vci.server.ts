@@ -4,11 +4,15 @@
  *   endpoint -> fetches a c_nonce -> sends a key proof to the credential endpoint -> receives one
  *   SD-JWT VC bound to its key, with a Token Status List index and a rout_pq hybrid signature.
  * Only SHA-256 hashes of codes and tokens reach the database (db/0294).
+ * Both endpoints require RFC 9449 DPoP (no Bearer fallback): the access token is bound to the
+ * wallet's DPoP key by storing only SHA-256(token "." jkt), so a token presented with any other
+ * key is simply unknown to the database.
  */
 import { b64uEncode } from "@/lib/support/hybrid-signature";
 import { isPublicJwk, parseJws, verifyJws, type PublicJwk } from "./jose";
 import { issueSdJwtVc, VERIFIED_HUMAN_CONFIG, VERIFIED_HUMAN_VCT, verifiedHumanClaims } from "./sd-jwt-vc";
 import { statusListUri } from "./status-list.server";
+import { checkDpopProof, DPOP_ALGS, JtiReplayCache } from "./dpop";
 
 export const PRE_AUTH_GRANT = "urn:ietf:params:oauth:grant-type:pre-authorized_code";
 export const PROOF_TYP = "openid4vci-proof+jwt";
@@ -20,6 +24,24 @@ async function sha256Hex(text: string): Promise<string> {
   const d = new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode(text)));
   return Array.from(d, (b) => b.toString(16).padStart(2, "0")).join("");
 }
+/** Per-instance DPoP jti replay cache (60 s window). */
+const dpopReplay = new JtiReplayCache();
+export const TOKEN_PATH = "/api/public/oid4vci/token";
+export const CREDENTIAL_PATH = "/api/public/oid4vci/credential";
+const boundTokenHash = (token: string, jkt: string) => sha256Hex(`${token}.${jkt}`);
+
+export type DpopRequest = { header: string | null; method: string; iss: string; now?: number };
+async function dpopGate(req: DpopRequest, path: string, accessToken?: string) {
+  const { checkDpopNonce } = await import("./keys.server");
+  const now = req.now ?? Date.now();
+  return checkDpopProof(req.header, { method: req.method, htu: `${req.iss}${path}`, now, checkNonce: (n) => checkDpopNonce(n, now), replay: dpopReplay, accessToken });
+}
+/** A fresh server nonce for the DPoP-Nonce response header (null = issuance off). */
+export async function freshDpopNonce(): Promise<string | null> {
+  const { newDpopNonce } = await import("./keys.server");
+  return newDpopNonce();
+}
+
 const token32 = () => b64uEncode(crypto.getRandomValues(new Uint8Array(32)));
 
 /** Six uniformly random digits (rejection sampling, no modulo bias). */
@@ -41,8 +63,9 @@ export function issuerMetadata(iss: string) {
   return {
     credential_issuer: iss,
     authorization_servers: [`${iss}/oid4vci`],
-    credential_endpoint: `${iss}/api/public/oid4vci/credential`,
+    credential_endpoint: `${iss}${CREDENTIAL_PATH}`,
     nonce_endpoint: `${iss}/api/public/oid4vci/nonce`,
+    dpop_signing_alg_values_supported: [...DPOP_ALGS],
     display: [{ name: "ROUT", locale: "nl-BE" }, { name: "ROUT", locale: "en" }],
     credential_configurations_supported: {
       [VERIFIED_HUMAN_CONFIG]: {
@@ -72,7 +95,8 @@ export function issuerMetadata(iss: string) {
 export function authorizationServerMetadata(iss: string) {
   return {
     issuer: `${iss}/oid4vci`,
-    token_endpoint: `${iss}/api/public/oid4vci/token`,
+    token_endpoint: `${iss}${TOKEN_PATH}`,
+    dpop_signing_alg_values_supported: [...DPOP_ALGS],
     grant_types_supported: [PRE_AUTH_GRANT],
     "pre-authorized_grant_anonymous_access_supported": true,
     response_types_supported: [],
@@ -120,10 +144,16 @@ export async function createOffer(userId: string, iss: string): Promise<OfferRes
 // ---------------------------------------------------------------- token endpoint
 
 export type TokenResult =
-  | { ok: true; body: { access_token: string; token_type: "Bearer"; expires_in: number } }
+  | { ok: true; body: { access_token: string; token_type: "DPoP"; expires_in: number } }
   | { ok: false; status: number; error: string; description: string };
 
-export async function redeemPreAuthorizedCode(form: URLSearchParams): Promise<TokenResult> {
+export async function redeemPreAuthorizedCode(form: URLSearchParams, dpop: DpopRequest): Promise<TokenResult> {
+  const proof = await dpopGate(dpop, TOKEN_PATH);
+  if (!proof.ok) {
+    return proof.error === "use_dpop_nonce"
+      ? { ok: false, status: 400, error: "use_dpop_nonce", description: "Retry with the server nonce from the DPoP-Nonce header." }
+      : { ok: false, status: 401, error: "invalid_dpop_proof", description: "A valid DPoP proof is required." };
+  }
   if (form.get("grant_type") !== PRE_AUTH_GRANT) return { ok: false, status: 400, error: "unsupported_grant_type", description: "Only the pre-authorized code grant is supported." };
   const code = form.get("pre-authorized_code") ?? "";
   const tx = form.get("tx_code") ?? "";
@@ -131,10 +161,10 @@ export async function redeemPreAuthorizedCode(form: URLSearchParams): Promise<To
   if (!(await ready())) return { ok: false, status: 503, error: "temporarily_unavailable", description: "Issuance is not available yet." };
   const accessToken = token32();
   const { sql } = await import("@/lib/neon");
-  const rows = (await sql`select public.rout_vci_redeem(${await sha256Hex(code)}, ${await sha256Hex(tx)}, ${await sha256Hex(accessToken)}) as r`) as { r: string }[];
+  const rows = (await sql`select public.rout_vci_redeem(${await sha256Hex(code)}, ${await sha256Hex(tx)}, ${await boundTokenHash(accessToken, proof.jkt)}) as r`) as { r: string }[];
   const r = rows[0]?.r ?? "invalid";
   if (r !== "ok") return { ok: false, status: 400, error: "invalid_grant", description: r === "expired" ? "The offer has expired." : r === "locked" ? "Too many wrong transaction codes." : r === "used" ? "The offer was already used." : "Unknown code or transaction code." };
-  return { ok: true, body: { access_token: accessToken, token_type: "Bearer", expires_in: ACCESS_TOKEN_TTL_S } };
+  return { ok: true, body: { access_token: accessToken, token_type: "DPoP", expires_in: ACCESS_TOKEN_TTL_S } };
 }
 
 // ---------------------------------------------------------------- credential endpoint
@@ -163,9 +193,16 @@ export async function checkProof(proofJwt: unknown, iss: string, now = Date.now(
   return { ok: true, jwk };
 }
 
-export async function issueCredential(authorization: string | null, body: unknown, iss: string): Promise<CredentialResult> {
-  const token = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(authorization ?? "")?.[1];
-  if (!token) return { ok: false, status: 401, error: "invalid_token", description: "Bearer access token required." };
+export async function issueCredential(authorization: string | null, body: unknown, iss: string, dpop: Omit<DpopRequest, "iss">): Promise<CredentialResult> {
+  // DPoP scheme only: a plain Bearer token (no key binding) is refused outright.
+  const token = /^DPoP ([A-Za-z0-9_-]{43})$/.exec(authorization ?? "")?.[1];
+  if (!token) return { ok: false, status: 401, error: "invalid_dpop_proof", description: "A DPoP-bound access token is required." };
+  const proofOfPossession = await dpopGate({ ...dpop, iss }, CREDENTIAL_PATH, token);
+  if (!proofOfPossession.ok) {
+    return proofOfPossession.error === "use_dpop_nonce"
+      ? { ok: false, status: 401, error: "use_dpop_nonce", description: "Retry with the server nonce from the DPoP-Nonce header." }
+      : { ok: false, status: 401, error: "invalid_dpop_proof", description: "A valid DPoP proof is required." };
+  }
   const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
   const configId = b["credential_configuration_id"] ?? (b["format"] === "dc+sd-jwt" && b["vct"] === VERIFIED_HUMAN_VCT ? VERIFIED_HUMAN_CONFIG : undefined);
   if (configId !== VERIFIED_HUMAN_CONFIG) return { ok: false, status: 400, error: "unknown_credential_configuration", description: "Unknown credential configuration." };
@@ -181,7 +218,7 @@ export async function issueCredential(authorization: string | null, body: unknow
   if (!key) return { ok: false, status: 503, error: "temporarily_unavailable", description: "Issuance is not available yet." };
   const jti = token32();
   const { sql } = await import("@/lib/neon");
-  const rows = (await sql`select * from public.rout_vci_issue(${await sha256Hex(token)}, ${await sha256Hex(jti)}, ${CREDENTIAL_DAYS})`) as Record<string, unknown>[];
+  const rows = (await sql`select * from public.rout_vci_issue(${await boundTokenHash(token, proofOfPossession.jkt)}, ${await sha256Hex(jti)}, ${CREDENTIAL_DAYS})`) as Record<string, unknown>[];
   const row = rows[0];
   if (!row) return { ok: false, status: 401, error: "invalid_token", description: "The access token is unknown, used or expired." };
   const { signPq } = await import("@/lib/crypto/hybrid-signer.server");

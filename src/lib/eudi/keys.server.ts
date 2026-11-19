@@ -1,7 +1,7 @@
 /**
  * EUDI issuer keys (server-only), all HKDF-SHA256 over ROUT_SUBJECT_MASTER_KEY with their own salt:
  *  - ES256 (P-256) for SD-JWT VCs and the Token Status List: 48 seed bytes reduced to a scalar;
- *  - HMAC-SHA256 for stateless OID4VCI c_nonce values.
+ *  - HMAC-SHA256 for stateless OID4VCI c_nonce values and (separate key) RFC 9449 DPoP nonces.
  * Seeds and scalars are zero-filled after use. No master key = issuance is off.
  */
 import { b64uEncode } from "@/lib/support/hybrid-signature";
@@ -60,8 +60,8 @@ export async function issuerJwks(): Promise<{ keys: Array<PublicJwk & { kid: str
 // ---------------------------------------------------------------- c_nonce
 
 const NONCE_TTL_S = 300;
-async function hmac(data: Uint8Array): Promise<Uint8Array | null> {
-  const key = await derive("rout.eudi.nonce", "hmac-sha256.v1", 32);
+async function hmac(data: Uint8Array, salt = "rout.eudi.nonce"): Promise<Uint8Array | null> {
+  const key = await derive(salt, "hmac-sha256.v1", 32);
   if (!key) return null;
   try {
     const { hmac: h } = await import("@noble/hashes/hmac.js");
@@ -72,11 +72,17 @@ async function hmac(data: Uint8Array): Promise<Uint8Array | null> {
   }
 }
 
-export async function newCNonce(now = Date.now()): Promise<string | null> {
+export const newCNonce = (now = Date.now()) => newNonce(now, "rout.eudi.nonce");
+export const checkCNonce = (nonce: unknown, now = Date.now()) => checkNonce(nonce, now, "rout.eudi.nonce");
+/** RFC 9449 server-provided DPoP nonce: same stateless format, its own HMAC key (never interchangeable with c_nonce). */
+export const newDpopNonce = (now = Date.now()) => newNonce(now, "rout.eudi.dpop-nonce");
+export const checkDpopNonce = (nonce: unknown, now = Date.now()) => checkNonce(nonce, now, "rout.eudi.dpop-nonce");
+
+async function newNonce(now: number, salt: string): Promise<string | null> {
   const body = new Uint8Array(24);
   new DataView(body.buffer).setBigUint64(0, BigInt(Math.floor(now / 1000)));
   body.set(crypto.getRandomValues(new Uint8Array(16)), 8);
-  const mac = await hmac(body);
+  const mac = await hmac(body, salt);
   if (!mac) return null;
   const out = new Uint8Array(40);
   out.set(body);
@@ -84,13 +90,13 @@ export async function newCNonce(now = Date.now()): Promise<string | null> {
   return b64uEncode(out);
 }
 
-export async function checkCNonce(nonce: unknown, now = Date.now()): Promise<boolean> {
+async function checkNonce(nonce: unknown, now: number, salt: string): Promise<boolean> {
   if (typeof nonce !== "string" || !/^[A-Za-z0-9_-]{54}$/.test(nonce)) return false;
   const { b64uDecode } = await import("@/lib/support/hybrid-signature");
   const raw = b64uDecode(nonce);
   if (raw.length !== 40) return false;
   const body = raw.subarray(0, 24);
-  const mac = await hmac(body);
+  const mac = await hmac(body, salt);
   if (!mac) return false;
   let diff = 0;
   for (let i = 0; i < 16; i++) diff |= mac[i]! ^ raw[24 + i]!;

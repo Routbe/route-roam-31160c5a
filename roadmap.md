@@ -483,5 +483,5 @@
 - [x] NIST ACVP ML-DSA-65 fixture + hybride handtekeningtests
 - [x] OID4VCI / OID4VP / Status List / zeroization tests
 - [ ] HANDOVER-appendix bijwerken na groene suite (wacht: enclave.test.ts faalt op crypto.subtle in src/routes/sign.$requestId.tsx, bestaande code)
-- [ ] DPoP JTI-replaybescherming op OID4VCI-token (wacht op keuze eigenaar: optioneel/verplicht)
+- [x] Verplichte DPoP (RFC 9449) op OID4VCI token + credential, 60 s jti-replaycache, metadata ES256/Ed25519
 - [x] Test: status-list-JWT verankerd aan gepubliceerde sleutel (kid)

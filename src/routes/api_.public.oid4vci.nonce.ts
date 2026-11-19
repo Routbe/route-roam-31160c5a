@@ -11,10 +11,11 @@ export const Route = createFileRoute("/api_/public/oid4vci/nonce")({
         const { RATE_RULES, tooManyRequests } = await import("@/lib/rate-limit-rules");
         const limit = await hitRateLimit("oid4vci-nonce", clientIp(request), RATE_RULES.oauthToken);
         if (!limit.ok) return tooManyRequests(limit.retryAfter, cors);
-        const { newCNonce } = await import("@/lib/eudi/keys.server");
+        const { newCNonce, newDpopNonce } = await import("@/lib/eudi/keys.server");
         const c_nonce = await newCNonce();
+        const dpopNonce = await newDpopNonce();
         return c_nonce
-          ? Response.json({ c_nonce }, { headers: cors })
+          ? Response.json({ c_nonce }, { headers: { ...cors, "access-control-expose-headers": "DPoP-Nonce", ...(dpopNonce ? { "dpop-nonce": dpopNonce } : {}) } })
           : Response.json({ error: "temporarily_unavailable" }, { status: 503, headers: cors });
       },
     },
